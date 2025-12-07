@@ -14,6 +14,13 @@ textarea { background: white !important; color: black !important; caret-color: b
   background: #ff0000; box-shadow: 0 0 20px #ff0000;
   transition: background 0.2s, box-shadow 0.2s;
 }
+#overlay {
+  position:absolute;
+  border:2px dashed yellow;
+  pointer-events:none;
+}
+.video-container { position:relative; width:100%; }
+video { width:100%; border-radius:12px; }
 </style>
 </head>
 <body class="bg-gray-900 dark:bg-gray-100 text-white dark:text-black min-h-screen flex flex-col items-center p-6">
@@ -35,14 +42,15 @@ textarea { background: white !important; color: black !important; caret-color: b
 
 <div class="w-full max-w-2xl bg-gray-800 dark:bg-gray-200 p-4 rounded-xl shadow-xl mb-6">
   <h2 class="font-bold mb-2">Receive Mode</h2>
-  <p class="text-sm mb-2 opacity-80">Point your camera at the other device to join the private flash chat.</p>
+  <p class="text-sm mb-2 opacity-80">Tap on the area where the other device will flash.</p>
   <button onclick="startReceive()" class="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition">Start Receiving</button>
   <div id="status" class="p-2 mt-2 bg-gray-900 dark:bg-gray-100 rounded text-center"></div>
   <div id="receivedOutput" class="p-3 bg-black dark:bg-white text-green-400 dark:text-purple-700 rounded h-24 overflow-y-auto mt-3"></div>
 </div>
 
-<div class="w-full max-w-2xl flex flex-col items-center mb-6">
-  <video id="video" autoplay playsinline class="w-full rounded-xl shadow-lg"></video>
+<div class="w-full max-w-2xl flex flex-col items-center mb-6 video-container">
+  <video id="video" autoplay playsinline></video>
+  <div id="overlay"></div>
   <div id="lightIndicator" class="mt-3"></div>
   <p class="mt-2 text-sm text-center opacity-70">Green when flash detected</p>
 </div>
@@ -56,6 +64,7 @@ const preamble = "10101011";
 let bitWindow = [];
 let ambientBrightness = 0;
 let lastBit = "0";
+let region = null; // user-selected region
 let state = "searchPreamble";
 let peerName = "";
 let sessionCode = "";
@@ -72,7 +81,8 @@ function generateSessionCode() {
 async function initCamera() {
   if(stream) return;
   stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-  document.getElementById("video").srcObject = stream;
+  const video = document.getElementById("video");
+  video.srcObject = stream;
 }
 
 // Flash sending
@@ -87,7 +97,6 @@ async function sendFlashMessage() {
   const deviceName = document.getElementById("deviceName").value || "Anonymous";
   if(!sessionCode) sessionCode = generateSessionCode(); // hidden session code
 
-  // full message: preamble + session + name + message
   const fullMsgStr = `${sessionCode}\n${deviceName}\n${msg}`;
   const fullMsg = preamble + [...fullMsgStr].map(c=>c.charCodeAt(0).toString(2).padStart(8,'0')).join("");
 
@@ -100,6 +109,21 @@ async function sendFlashMessage() {
   }
   nextBit();
 }
+
+// select region
+const videoContainer=document.querySelector(".video-container");
+const overlay=document.getElementById("overlay");
+videoContainer.addEventListener("click", e=>{
+  const rect=videoContainer.getBoundingClientRect();
+  const x=(e.clientX-rect.left)/rect.width;
+  const y=(e.clientY-rect.top)/rect.height;
+  const size=0.2;
+  region={x:x-size/2,y:y-size/2,width:size,height:size};
+  overlay.style.left=(region.x*100)+"%";
+  overlay.style.top=(region.y*100)+"%";
+  overlay.style.width=(region.width*100)+"%";
+  overlay.style.height=(region.height*100)+"%";
+});
 
 // Robust light detection
 async function startReceive() {
@@ -123,10 +147,16 @@ async function startReceive() {
     ctx.drawImage(video,0,0);
     const frame=ctx.getImageData(0,0,canvas.width,canvas.height).data;
 
-    // sample center area for robust detection
-    const startX=canvas.width*0.4|0, endX=canvas.width*0.6|0;
-    const startY=canvas.height*0.4|0, endY=canvas.height*0.6|0;
-    let brightnessSum=0, count=0;
+    // define sampling region
+    let startX=0, endX=canvas.width, startY=0, endY=canvas.height;
+    if(region){
+      startX=region.x*canvas.width|0;
+      endX=(region.x+region.width)*canvas.width|0;
+      startY=region.y*canvas.height|0;
+      endY=(region.y+region.height)*canvas.height|0;
+    }
+
+    let brightnessSum=0,count=0;
     for(let y=startY;y<endY;y++){
       for(let x=startX;x<endX;x++){
         const idx=(y*canvas.width+x)*4;
@@ -162,12 +192,9 @@ async function startReceive() {
       } else if(state==="receiveSession"){
         if(binaryBuffer.length===8){
           const char=String.fromCharCode(parseInt(binaryBuffer,2));
-          if(!incomingSessionCode) incomingSessionCode+=char;
-          else if(!peerName) peerName+=char;
-          else document.getElementById("receivedOutput").innerText+=char;
+          document.getElementById("receivedOutput").innerText+=char;
           binaryBuffer="";
-          if(peerName) status.innerText=`You are synced in a private flash chat with ${peerName}`;
-          else status.innerText=`Receiving session...`;
+          status.innerText=`Receiving flash chat...`;
         }
       }
     }
