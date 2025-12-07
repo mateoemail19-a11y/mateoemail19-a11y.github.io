@@ -2,208 +2,164 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Flasher Messaging ⚡ - Offline Private Chat</title>
+<title>Flasher Messaging ⚡ - Offline Audio & Light Flash Chat</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
-body { font-family: sans-serif; transition: background 0.3s, color 0.3s; }
-textarea { background: white !important; color: black !important; caret-color: black !important; }
-.dark textarea { background: #111 !important; color: white !important; caret-color: white !important; }
-#lightIndicator {
-  width: 60px; height: 60px; border-radius: 50%;
-  background: #ff0000; box-shadow: 0 0 20px #ff0000;
-  transition: background 0.2s, box-shadow 0.2s;
-}
-#overlay {
-  position:absolute;
-  border:2px dashed yellow;
-  pointer-events:none;
-}
-.video-container { position:relative; width:100%; }
-video { width:100%; border-radius:12px; }
+body { transition: background 0.3s, color 0.3s; }
+input, textarea { background:white !important; color:black !important; caret-color:black !important; }
+.dark input, .dark textarea { background:#111 !important; color:white !important; caret-color:white !important; }
+#videoContainer { position:relative; width:100%; max-width:480px; }
+#video { width:100%; border-radius:12px; }
+#detector { position:absolute; border:3px dashed #00ff00; border-radius:12px; cursor:crosshair; }
+#lightIndicator { width:50px; height:50px; border-radius:50%; background:#ff0000; box-shadow:0 0 20px #ff0000; transition: background 0.2s, box-shadow 0.2s; }
 </style>
 </head>
-<body class="bg-gray-900 dark:bg-gray-100 text-white dark:text-black min-h-screen flex flex-col items-center p-6">
+<body class="bg-gray-900 dark:bg-gray-100 text-white dark:text-black font-sans min-h-screen flex flex-col items-center p-4">
 
-<div class="w-full max-w-2xl flex justify-between items-center mb-6">
-  <h1 class="text-3xl font-bold">Flasher Messaging ⚡</h1>
+<h1 class="text-3xl font-bold mb-2">Flasher Messaging ⚡</h1>
+<p class="text-center mb-4 opacity-80">Offline secure flash & audio chat</p>
+<button onclick="document.documentElement.classList.toggle('dark')" class="mb-4 px-4 py-2 bg-yellow-500 rounded hover:bg-yellow-600">Toggle Theme</button>
+
+<div class="w-full max-w-md mb-4">
+<label class="block mb-1">Your Device Name</label>
+<input type="text" id="deviceName" placeholder="Enter your device name" class="w-full p-2 rounded">
 </div>
 
-<div class="w-full max-w-2xl bg-gray-800 dark:bg-gray-200 p-4 rounded-xl shadow-xl mb-6">
-  <label class="block mb-2 text-sm">Your Device Name</label>
-  <input id="deviceName" type="text" placeholder="Enter your name..." class="w-full p-2 rounded">
+<div class="w-full max-w-md mb-4">
+<label class="block mb-1">Message to Send</label>
+<textarea id="flashMessage" placeholder="Type your message..." class="w-full h-24 p-2 rounded"></textarea>
+<button onclick="sendFlashMessage()" class="w-full mt-2 py-2 bg-green-600 rounded hover:bg-green-700">Send Flash Signal</button>
+<button onclick="sendAudioMessage()" class="w-full mt-2 py-2 bg-blue-600 rounded hover:bg-blue-700">Send Audio Signal</button>
 </div>
 
-<div class="w-full max-w-2xl bg-gray-800 dark:bg-gray-200 p-4 rounded-xl shadow-xl mb-6">
-  <label class="block mb-2 text-sm">Message to Flash</label>
-  <textarea id="flashMessage" placeholder="Type message..." class="w-full h-24 p-2 rounded"></textarea>
-  <button onclick="sendFlashMessage()" class="w-full mt-3 py-2 bg-green-600 text-white rounded font-semibold hover:bg-green-700 transition">Send Flash</button>
+<div id="videoContainer" class="mb-4">
+<video id="video" autoplay playsinline></video>
+<div id="detector"></div>
 </div>
-
-<div class="w-full max-w-2xl bg-gray-800 dark:bg-gray-200 p-4 rounded-xl shadow-xl mb-6">
-  <h2 class="font-bold mb-2">Receive Mode</h2>
-  <p class="text-sm mb-2 opacity-80">Tap on the area where the other device will flash.</p>
-  <button onclick="startReceive()" class="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition">Start Receiving</button>
-  <div id="status" class="p-2 mt-2 bg-gray-900 dark:bg-gray-100 rounded text-center"></div>
-  <div id="receivedOutput" class="p-3 bg-black dark:bg-white text-green-400 dark:text-purple-700 rounded h-24 overflow-y-auto mt-3"></div>
-</div>
-
-<div class="w-full max-w-2xl flex flex-col items-center mb-6 video-container">
-  <video id="video" autoplay playsinline></video>
-  <div id="overlay"></div>
-  <div id="lightIndicator" class="mt-3"></div>
-  <p class="mt-2 text-sm text-center opacity-70">Green when flash detected</p>
-</div>
+<p class="text-center text-sm mb-2">Tap and drag the green box to focus detection area</p>
+<div id="lightIndicator" class="mb-2"></div>
+<div class="w-full max-w-md bg-gray-800 dark:bg-gray-200 p-3 rounded h-32 overflow-y-auto" id="receivedOutput"></div>
 
 <script>
-let stream;
-let binaryBuffer = "";
-let lastBitTime = 0;
-const bitDuration = 150;
-const preamble = "10101011";
-let bitWindow = [];
-let ambientBrightness = 0;
-let lastBit = "0";
-let region = null; // user-selected region
-let state = "searchPreamble";
-let peerName = "";
-let sessionCode = "";
+let stream, audioCtx, oscillator, micStream;
+let region = { x:0, y:0, w:0, h:0 };
+let isDragging=false, startX, startY;
+let binaryBuffer="", lastBit=0, smoothing=0;
+let syncedDevice = null;
 
-// generate random session code
-function generateSessionCode() {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let code = "";
-  for(let i=0;i<6;i++) code+=chars[Math.floor(Math.random()*chars.length)];
-  return code;
-}
-
-// init camera
+// CAMERA INIT
 async function initCamera() {
-  if(stream) return;
-  stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-  const video = document.getElementById("video");
-  video.srcObject = stream;
+  if(!stream){
+    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+    document.getElementById('video').srcObject = stream;
+  }
 }
 
-// Flash sending
-async function sendFlashMessage() {
-  const msg = document.getElementById("flashMessage").value.trim();
+// TAP TO SELECT REGION
+const detector=document.getElementById('detector');
+const videoContainer=document.getElementById('videoContainer');
+detector.addEventListener('mousedown',e=>{isDragging=true; startX=e.offsetX; startY=e.offsetY;});
+videoContainer.addEventListener('mousemove',e=>{if(!isDragging)return; region.x=Math.min(startX,e.offsetX); region.y=Math.min(startY,e.offsetY); region.w=Math.abs(startX-e.offsetX); region.h=Math.abs(startY-e.offsetY); detector.style.left=region.x+'px'; detector.style.top=region.y+'px'; detector.style.width=region.w+'px'; detector.style.height=region.h+'px';});
+window.addEventListener('mouseup',()=>isDragging=false);
+
+// SEND LIGHT FLASH
+async function sendFlashMessage(){
+  const msg=document.getElementById('flashMessage').value.trim();
   if(!msg) return alert("Enter a message first");
   await initCamera();
-  const track = stream.getVideoTracks()[0];
-  const caps = track.getCapabilities();
-  if(!caps.torch) return alert("Torch not supported.");
-
-  const deviceName = document.getElementById("deviceName").value || "Anonymous";
-  if(!sessionCode) sessionCode = generateSessionCode(); // hidden session code
-
-  const fullMsgStr = `${sessionCode}\n${deviceName}\n${msg}`;
-  const fullMsg = preamble + [...fullMsgStr].map(c=>c.charCodeAt(0).toString(2).padStart(8,'0')).join("");
-
+  const videoTrack=stream.getVideoTracks()[0];
+  const caps=videoTrack.getCapabilities();
+  if(!caps.torch) return alert("Torch not supported");
+  const binaryMsg='10101010'+Array.from(msg).map(c=>c.charCodeAt(0).toString(2).padStart(8,'0')).join('')+'11111111';
   let i=0;
-  function nextBit(){
-    if(i>=fullMsg.length) return track.applyConstraints({ advanced:[{torch:false}] });
-    track.applyConstraints({ advanced:[{torch:fullMsg[i]==='1'}]});
-    i++;
-    setTimeout(nextBit, bitDuration);
-  }
+  function nextBit(){if(i>=binaryMsg.length){videoTrack.applyConstraints({advanced:[{torch:false}]});return;} videoTrack.applyConstraints({advanced:[{torch:binaryMsg[i]==='1'}]}); i++; setTimeout(nextBit,150);}
   nextBit();
 }
 
-// select region
-const videoContainer=document.querySelector(".video-container");
-const overlay=document.getElementById("overlay");
-videoContainer.addEventListener("click", e=>{
-  const rect=videoContainer.getBoundingClientRect();
-  const x=(e.clientX-rect.left)/rect.width;
-  const y=(e.clientY-rect.top)/rect.height;
-  const size=0.2;
-  region={x:x-size/2,y:y-size/2,width:size,height:size};
-  overlay.style.left=(region.x*100)+"%";
-  overlay.style.top=(region.y*100)+"%";
-  overlay.style.width=(region.width*100)+"%";
-  overlay.style.height=(region.height*100)+"%";
-});
+// SEND AUDIO MESSAGE
+async function sendAudioMessage(){
+  const msg=document.getElementById('flashMessage').value.trim();
+  if(!msg) return alert("Enter a message first");
+  if(!audioCtx) audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+  const binaryMsg='10101010'+Array.from(msg).map(c=>c.charCodeAt(0).toString(2).padStart(8,'0')).join('')+'11111111';
+  oscillator=audioCtx.createOscillator();
+  oscillator.frequency.value=1500;
+  oscillator.type='square';
+  const gainNode=audioCtx.createGain();
+  oscillator.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+  let i=0;
+  function nextBit(){if(i>=binaryMsg.length){gainNode.gain.value=0; return;} gainNode.gain.value=binaryMsg[i]==='1'?1:0; i++; setTimeout(nextBit,150);}
+  oscillator.start(); nextBit();
+}
 
-// Robust light detection
-async function startReceive() {
+// RECEIVE MODE
+async function startReceive(){
   await initCamera();
-  const video = document.getElementById("video");
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
-  const indicator = document.getElementById("lightIndicator");
-  const status = document.getElementById("status");
-  binaryBuffer="";
-  state="searchPreamble";
-  bitWindow=[];
-  ambientBrightness=0;
-  lastBit="0";
-  peerName="";
-  let incomingSessionCode="";
+  const video=document.getElementById('video');
+  const canvas=document.createElement('canvas');
+  const ctx=canvas.getContext('2d');
+  const indicator=document.getElementById('lightIndicator');
+  binaryBuffer=""; lastBit=0; smoothing=0;
+  syncedDevice=document.getElementById('deviceName').value || 'Unknown';
 
-  function readFrame(){
-    canvas.width=video.videoWidth;
-    canvas.height=video.videoHeight;
-    ctx.drawImage(video,0,0);
-    const frame=ctx.getImageData(0,0,canvas.width,canvas.height).data;
-
-    // define sampling region
-    let startX=0, endX=canvas.width, startY=0, endY=canvas.height;
-    if(region){
-      startX=region.x*canvas.width|0;
-      endX=(region.x+region.width)*canvas.width|0;
-      startY=region.y*canvas.height|0;
-      endY=(region.y+region.height)*canvas.height|0;
-    }
-
-    let brightnessSum=0,count=0;
-    for(let y=startY;y<endY;y++){
-      for(let x=startX;x<endX;x++){
-        const idx=(y*canvas.width+x)*4;
-        brightnessSum += frame[idx]+frame[idx+1]+frame[idx+2];
-        count++;
-      }
-    }
-    let brightness=brightnessSum/(count*3);
-    ambientBrightness=ambientBrightness*0.9+brightness*0.1;
-    const threshold=ambientBrightness*1.3;
-    const bit=brightness>threshold?"1":"0";
-
-    bitWindow.push(bit);
-    if(bitWindow.length>5) bitWindow.shift();
-    const majority = bitWindow.filter(b=>b==="1").length>2?"1":"0";
-
-    const now=performance.now();
-    if(now-lastBitTime>bitDuration*0.8 && majority!==lastBit){
-      lastBitTime=now;
-      lastBit=majority;
-      indicator.style.background=majority==="1"?"#00ff00":"#ff0000";
-      indicator.style.boxShadow=majority==="1"?"0 0 30px #00ff00":"0 0 20px #ff0000";
-      binaryBuffer+=majority;
-
-      // decode messages
-      if(state==="searchPreamble"){
-        if(binaryBuffer.endsWith(preamble)){
-          state="receiveSession";
-          binaryBuffer="";
-        } else if(binaryBuffer.length>preamble.length*2){
-          binaryBuffer=binaryBuffer.slice(-preamble.length);
+  // AUDIO INIT
+  if(!micStream){
+    micStream=await navigator.mediaDevices.getUserMedia({audio:true});
+    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    const source=audioCtx.createMediaStreamSource(micStream);
+    const analyser=audioCtx.createAnalyser();
+    analyser.fftSize=2048;
+    source.connect(analyser);
+    const dataArray=new Uint8Array(analyser.fftSize);
+    function readAudioFrame(){
+      analyser.getByteTimeDomainData(dataArray);
+      let avg=dataArray.reduce((a,b)=>a+b,0)/dataArray.length;
+      let audioBit=avg>128?1:0;
+      if(audioBit!==lastBit){
+        binaryBuffer+=audioBit;
+        if(binaryBuffer.length>=8){
+          const char=String.fromCharCode(parseInt(binaryBuffer.slice(0,8),2));
+          document.getElementById('receivedOutput').innerText+=char;
+          binaryBuffer=binaryBuffer.slice(8);
         }
-      } else if(state==="receiveSession"){
-        if(binaryBuffer.length===8){
-          const char=String.fromCharCode(parseInt(binaryBuffer,2));
-          document.getElementById("receivedOutput").innerText+=char;
-          binaryBuffer="";
-          status.innerText=`Receiving flash chat...`;
-        }
+        lastBit=audioBit;
       }
+      requestAnimationFrame(readAudioFrame);
     }
-
-    requestAnimationFrame(readFrame);
+    readAudioFrame();
   }
 
+  function readFrame(){
+    if(!video.videoWidth){ requestAnimationFrame(readFrame); return; }
+    canvas.width=region.w||video.videoWidth;
+    canvas.height=region.h||video.videoHeight;
+    ctx.drawImage(video, region.x||0, region.y||0, canvas.width, canvas.height, 0,0,canvas.width,canvas.height);
+    const frame=ctx.getImageData(0,0,canvas.width,canvas.height).data;
+    let sum=0;
+    for(let i=0;i<frame.length;i+=4) sum+=0.299*frame[i]+0.587*frame[i+1]+0.114*frame[i+2];
+    let avg=sum/(frame.length/4);
+    smoothing=0.7*smoothing+0.3*avg;
+    const bit=smoothing>100?1:0;
+    if(bit!==lastBit){
+      binaryBuffer+=bit;
+      if(binaryBuffer.length>=8){
+        const char=String.fromCharCode(parseInt(binaryBuffer.slice(0,8),2));
+        document.getElementById('receivedOutput').innerText+=char;
+        binaryBuffer=binaryBuffer.slice(8);
+      }
+      lastBit=bit;
+    }
+    indicator.style.background=bit?'#00ff00':'#ff0000';
+    indicator.style.boxShadow=bit?'0 0 30px #00ff00':'0 0 20px #ff0000';
+    requestAnimationFrame(readFrame);
+  }
   readFrame();
 }
+
+startReceive();
 </script>
 </body>
 </html>
