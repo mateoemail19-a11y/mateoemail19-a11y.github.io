@@ -2,24 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Flasher Messenger ⚡ - Private Sync</title>
+<title>Flasher Messaging ⚡ - Offline Private Flash</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
-body { background:#111; color:#fff; font-family:sans-serif; margin:0; padding:10px;}
+body { background:#111; color:#fff; font-family:sans-serif; margin:0; padding:12px; }
 input, textarea { width:100%; padding:8px; margin:4px 0; border-radius:6px; background:#222; color:#fff; border:none; }
 button { padding:8px 12px; border-radius:6px; background:#0a84ff; color:#fff; margin-top:4px; cursor:pointer; }
 button:hover { background:#0066cc; }
 #video { width:100%; max-width:400px; border-radius:12px; margin-top:10px; }
-#lightIndicator { width:50px; height:50px; border-radius:50%; background:#ff0000; box-shadow:0 0 20px #ff0000; margin:10px auto; transition:0.1s; }
+#lightIndicator { width:60px; height:60px; border-radius:50%; background:#ff0000; box-shadow:0 0 20px #ff0000; margin:10px auto; transition:0.1s; cursor:pointer; }
 #receivedOutput { width:100%; max-width:400px; min-height:80px; background:#222; padding:8px; border-radius:8px; overflow:auto; color:#0f0; }
 </style>
 </head>
 <body>
 
-<h1 class="text-2xl font-bold mb-2">Flasher Messenger ⚡</h1>
-<p class="text-sm mb-4 opacity-70">Offline Flash Communication using Morse code</p>
+<h1 class="text-2xl font-bold mb-2">Flasher Messaging ⚡</h1>
+<p class="text-sm mb-4 opacity-70">Offline Private Flash Communication</p>
 
 <input id="deviceName" type="text" placeholder="Enter your device name..." />
 <textarea id="flashMessage" placeholder="Type message..."></textarea>
@@ -31,44 +30,40 @@ button:hover { background:#0066cc; }
 
 <div style="position:relative;">
   <video id="video" autoplay playsinline></video>
+  <div id="lightIndicator" title="Tap to select detection area"></div>
 </div>
-<div id="lightIndicator"></div>
-<p class="text-sm opacity-70 text-center">Flash detector shows green when light is detected</p>
+<p class="text-sm opacity-70 text-center">Light detector shows green when flash is detected</p>
 
 <script>
-const morseNormal = {
-  'A':".-", 'B':"-...", 'C':"-.-.", 'D':"-..", 'E':".",
-  'F':"..-.", 'G':"--.", 'H':"....", 'I':"..", 'J':".---",
-  'K':"-.-", 'L':".-..", 'M':"--", 'N':"-.", 'O':"---",
-  'P':".--.", 'Q':"--.-", 'R':".-.", 'S':"...", 'T':"-",
-  'U':"..-", 'V':"...-", 'W':".--", 'X':"-..-", 'Y':"-.--",
-  'Z':"--..", '0':"-----", '1':".----", '2':"..---", '3':"...--",
-  '4':"....-", '5':".....", '6':"-....", '7':"--...", '8':"---..", '9':"----.", ' ':' '
-};
+// Morse maps
+const morseNormal = { 'A':".-", 'B':"-...", 'C':"-.-.", 'D':"-..", 'E':".", 'F':"..-.", 'G':"--.", 'H':"....", 'I':"..", 'J':".---",
+'K':"-.-", 'L':".-..", 'M':"--", 'N':"-.", 'O':"---", 'P':".--.", 'Q':"--.-", 'R':".-.", 'S':"...", 'T':"-",
+'U':"..-", 'V':"...-", 'W':".--", 'X':"-..-", 'Y':"-.--", 'Z':"--..", '0':"-----", '1':".----", '2':"..---",
+'3':"...--", '4':"....-", '5':".....", '6':"-....", '7':"--...", '8':"---..", '9':"----.", ' ':' '};
 
-let privateSync = false;
-let morsePrivate = {};
+let privateSync=false, morsePrivate={}, morseCurrent={...morseNormal};
 
 function generatePrivateMorse() {
-  // Shuffle Morse codes for private sync
   const keys = Object.keys(morseNormal);
   const values = Object.values(morseNormal).sort(()=>Math.random()-0.5);
-  let privateMap = {};
-  keys.forEach((k,i)=>{privateMap[k]=values[i]});
-  return privateMap;
+  let map={}; keys.forEach((k,i)=>{map[k]=values[i]}); return map;
 }
 
-let morseCurrent = {...morseNormal};
-
 let stream, track;
-let receiveActive = true;
-let binaryBuffer = '';
-let lastBit = 0;
-let lastTime = 0;
+let receiveActive=true;
+let bitBuffer="", lastBit=0, lastTime=0, morseBuffer="", receivedText="";
+let detectionArea=null;
+const video=document.getElementById('video');
+const indicator=document.getElementById('lightIndicator');
+const receivedOutput=document.getElementById('receivedOutput');
 
-const video = document.getElementById('video');
-const indicator = document.getElementById('lightIndicator');
-const receivedOutput = document.getElementById('receivedOutput');
+indicator.addEventListener('click', e=>{
+  const rect = video.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  detectionArea={x:x/rect.width,y:y/rect.height,w:0.2,h:0.2};
+  alert("Detection area selected!");
+});
 
 async function initCamera() {
   if(!stream){
@@ -80,80 +75,87 @@ async function initCamera() {
 
 function togglePrivateSync(){
   privateSync = !privateSync;
-  if(privateSync){
-    morsePrivate = generatePrivateMorse();
-    morseCurrent = {...morsePrivate};
-    alert("Private Sync Enabled");
-  } else {
-    morseCurrent = {...morseNormal};
-    alert("Private Sync Disabled");
-  }
+  if(privateSync){ morsePrivate = generatePrivateMorse(); morseCurrent={...morsePrivate}; alert("Private Sync Enabled"); }
+  else { morseCurrent={...morseNormal}; alert("Private Sync Disabled"); }
 }
 
-// Convert text to Morse
-function textToMorse(text){
-  return text.toUpperCase().split('').map(c=>morseCurrent[c]||'').join(' ');
-}
+// Morse encode text
+function textToMorse(text){ return text.toUpperCase().split('').map(c=>morseCurrent[c]||'').join(' '); }
 
-// Send Morse via flashlight
+// Flash sending
 async function sendMessage(){
-  const msg = document.getElementById("flashMessage").value.trim();
-  const name = document.getElementById("deviceName").value.trim() || "Device";
+  const msg=document.getElementById("flashMessage").value.trim();
+  const name=document.getElementById("deviceName").value.trim()||"Device";
   if(!msg) return alert("Enter message");
   await initCamera();
-  const fullMessage = name + ": " + msg;
-  const morseMessage = textToMorse(fullMessage);
-  const caps = track.getCapabilities();
+  const fullMessage=name+": "+msg;
+  const morseMessage=textToMorse(fullMessage);
+  const caps=track.getCapabilities();
   if(!caps.torch) return alert("Torch not supported");
-
-  let index = 0;
+  let index=0;
   function nextSymbol(){
-    if(index >= morseMessage.length){ track.applyConstraints({advanced:[{torch:false}]}); return; }
-    const s = morseMessage[index];
-    let dur = s==='.'?200:s==='-'?600:200;
-
+    if(index>=morseMessage.length){ track.applyConstraints({advanced:[{torch:false}]}); return; }
+    const s=morseMessage[index];
+    let dur=s==='.'?200:s==='-'?600:200;
     track.applyConstraints({advanced:[{torch:s===' '?false:true}]});
-    setTimeout(()=>{
-      track.applyConstraints({advanced:[{torch:false}]});
-      index++;
-      setTimeout(nextSymbol,200);
-    },dur);
+    setTimeout(()=>{ track.applyConstraints({advanced:[{torch:false}]}); index++; setTimeout(nextSymbol,200); },dur);
   }
   nextSymbol();
 }
 
-// Detect flashes and decode
+// Flash receiving and decoding
 async function startReceive(){
   await initCamera();
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
+  const canvas=document.createElement('canvas');
+  const ctx=canvas.getContext('2d');
+  const dotTime=200;
+
+  function decodeMorse(buf){
+    const revMap={}; Object.keys(morseCurrent).forEach(k=>{revMap[morseCurrent[k]]=k});
+    let words=buf.trim().split('   '); // 3 spaces between words
+    let result='';
+    words.forEach(w=>{w.split(' ').forEach(c=>{result+=revMap[c]||''}); result+=' ';});
+    return result.trim();
+  }
 
   function readFrame(){
     if(!receiveActive) return;
-
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    canvas.width=video.videoWidth; canvas.height=video.videoHeight;
     ctx.drawImage(video,0,0);
-    const frame = ctx.getImageData(0,0,canvas.width,canvas.height).data;
+    const frame=ctx.getImageData(0,0,canvas.width,canvas.height).data;
 
-    let brightness=0;
-    for(let i=0;i<frame.length;i+=4) brightness+=frame[i]+frame[i+1]+frame[i+2];
-    brightness/=frame.length/4;
+    let brightness=0,count=0;
+    const wStart=detectionArea?Math.floor(canvas.width*detectionArea.x):0;
+    const hStart=detectionArea?Math.floor(canvas.height*detectionArea.y):0;
+    const wEnd=detectionArea?Math.floor(canvas.width*(detectionArea.x+detectionArea.w)):canvas.width;
+    const hEnd=detectionArea?Math.floor(canvas.height*(detectionArea.y+detectionArea.h)):canvas.height;
 
-    const threshold = 130;
-    const bit = brightness>threshold?1:0;
+    for(let y=hStart;y<hEnd;y++){ for(let x=wStart;x<wEnd;x++){
+      const idx=(y*canvas.width+x)*4; brightness+=frame[idx]+frame[idx+1]+frame[idx+2]; count++;}}
+    brightness/=count;
+    const threshold=130;
+    const bit=brightness>threshold?1:0;
 
-    indicator.style.background = bit?'#0f0':'#f00';
-    indicator.style.boxShadow = bit?'0 0 30px #0f0':'0 0 20px #f00';
+    indicator.style.background=bit?'#0f0':'#f00';
+    indicator.style.boxShadow=bit?'0 0 30px #0f0':'0 0 20px #f00';
 
-    let now = Date.now();
+    let now=Date.now();
     if(bit!==lastBit){
-      let delta = now-lastTime;
-      if(delta>100){ // simple timing threshold
-        binaryBuffer += bit?'1':'0';
+      let delta=now-lastTime;
+      if(delta>dotTime*0.5){
+        bitBuffer+=bit?'1':'0';
+        if(bitBuffer.length>=3){ // simple 1-3 bit for dot/dash
+          if(bitBuffer==='1'){ morseBuffer+='.'; bitBuffer=''; }
+          else if(bitBuffer==='111'){ morseBuffer+='-'; bitBuffer=''; }
+          else if(bitBuffer==='000'){ morseBuffer+=' '; bitBuffer=''; } 
+        }
       }
-      lastTime = now;
-      lastBit = bit;
+      lastTime=now; lastBit=bit;
+    }
+
+    if(morseBuffer.length>=1){
+      receivedText=decodeMorse(morseBuffer);
+      receivedOutput.innerText=receivedText;
     }
 
     requestAnimationFrame(readFrame);
